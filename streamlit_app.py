@@ -510,143 +510,158 @@ def main():
                     trades_df, equity_df = result
                     st.session_state['trades_df'] = trades_df
                     st.session_state['equity_df'] = equity_df
+                    st.session_state['backtest_completed'] = True
 
                     # Generate pooled results if multiple tickers
-                    if len(tickers) > 1:
+                    if len(tickers) > 1 and not trades_df.empty:
                         st.session_state['pooled_results'] = generate_pooled_results(trades_df)
 
     # Display Results
-    if 'trades_df' in st.session_state and not st.session_state['trades_df'].empty:
-        trades_df = st.session_state['trades_df']
+    if 'backtest_completed' in st.session_state and st.session_state.get('backtest_completed'):
+        trades_df = st.session_state.get('trades_df', pd.DataFrame())
 
-        # Key Metrics Row
-        st.markdown("### 📊 Performance Summary")
+        if trades_df.empty:
+            st.warning("⚠️ **No trades executed.** The setup criteria were not met for any ticker in the date range.")
+            st.markdown("""
+            **Possible reasons:**
+            - Gap/volume thresholds not reached
+            - Price action didn't meet entry criteria
+            - Not enough historical data for indicators
 
-        total_trades = len(trades_df)
-        winning_trades = (trades_df['pnl'] > 0).sum()
-        win_rate = winning_trades / total_trades if total_trades > 0 else 0
-        total_pnl = trades_df['pnl'].sum()
+            **Try:**
+            - Expanding the date range
+            - Adding more tickers or using a preset watchlist
+            - Selecting different setups (Episodic Pivots often has more signals)
+            """)
+        else:
+            # Key Metrics Row
+            st.markdown("### 📊 Performance Summary")
 
-        wins_sum = trades_df[trades_df['pnl'] > 0]['pnl'].sum()
-        losses_sum = abs(trades_df[trades_df['pnl'] <= 0]['pnl'].sum())
-        profit_factor = wins_sum / losses_sum if losses_sum > 0 else float('inf')
+            total_trades = len(trades_df)
+            winning_trades = (trades_df['pnl'] > 0).sum()
+            win_rate = winning_trades / total_trades if total_trades > 0 else 0
+            total_pnl = trades_df['pnl'].sum()
 
-        col1, col2, col3, col4, col5 = st.columns(5)
+            wins_sum = trades_df[trades_df['pnl'] > 0]['pnl'].sum()
+            losses_sum = abs(trades_df[trades_df['pnl'] <= 0]['pnl'].sum())
+            profit_factor = wins_sum / losses_sum if losses_sum > 0 else float('inf')
 
-        with col1:
-            st.metric("Total Trades", total_trades)
-        with col2:
-            st.metric("Win Rate", f"{win_rate:.1%}")
-        with col3:
-            st.metric("Profit Factor", f"{profit_factor:.2f}")
-        with col4:
-            delta_color = "normal" if total_pnl >= 0 else "inverse"
-            st.metric("Total PnL", f"${total_pnl:,.2f}", delta_color=delta_color)
-        with col5:
-            returns = (total_pnl / config.INITIAL_CAPITAL) * 100
-            st.metric("Return", f"{returns:.1f}%")
+            col1, col2, col3, col4, col5 = st.columns(5)
 
-        # Pooled Results (for multi-ticker analysis)
-        if 'pooled_results' in st.session_state and st.session_state['pooled_results']:
-            pooled = st.session_state['pooled_results']
+            with col1:
+                st.metric("Total Trades", total_trades)
+            with col2:
+                st.metric("Win Rate", f"{win_rate:.1%}")
+            with col3:
+                st.metric("Profit Factor", f"{profit_factor:.2f}")
+            with col4:
+                delta_color = "normal" if total_pnl >= 0 else "inverse"
+                st.metric("Total PnL", f"${total_pnl:,.2f}", delta_color=delta_color)
+            with col5:
+                returns = (total_pnl / config.INITIAL_CAPITAL) * 100
+                st.metric("Return", f"{returns:.1f}%")
+
+            # Pooled Results (for multi-ticker analysis)
+            if 'pooled_results' in st.session_state and st.session_state['pooled_results']:
+                pooled = st.session_state['pooled_results']
+                st.markdown("---")
+                st.markdown("### 🔬 Pooled Analysis")
+                st.markdown(f"*Aggregated results across {pooled.get('total_tickers', 0)} stocks*")
+
+                # Recommendations
+                for rec in pooled.get('recommendations', []):
+                    st.info(rec)
+
+                # Best setups table
+                if pooled.get('best_setups'):
+                    st.markdown("**Top Performing Setups:**")
+                    best_df = pd.DataFrame(pooled['best_setups'])
+                    st.dataframe(
+                        best_df.style.format({
+                            'win_rate': '{:.0%}',
+                            'profit_factor': '{:.2f}',
+                            'total_pnl': '${:,.0f}',
+                            'avg_r': '{:.2f}R'
+                        }),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+            # Charts Row 1
             st.markdown("---")
-            st.markdown("### 🔬 Pooled Analysis")
-            st.markdown(f"*Aggregated results across {pooled.get('total_tickers', 0)} stocks*")
+            col1, col2 = st.columns([2, 1])
 
-            # Recommendations
-            for rec in pooled.get('recommendations', []):
-                st.info(rec)
+            with col1:
+                st.plotly_chart(create_equity_chart(trades_df), use_container_width=True)
 
-            # Best setups table
-            if pooled.get('best_setups'):
-                st.markdown("**Top Performing Setups:**")
-                best_df = pd.DataFrame(pooled['best_setups'])
-                st.dataframe(
-                    best_df.style.format({
-                        'win_rate': '{:.0%}',
-                        'profit_factor': '{:.2f}',
-                        'total_pnl': '${:,.0f}',
-                        'avg_r': '{:.2f}R'
-                    }),
-                    use_container_width=True,
-                    hide_index=True
-                )
+            with col2:
+                st.plotly_chart(create_pnl_distribution(trades_df), use_container_width=True)
 
-        # Charts Row 1
-        st.markdown("---")
-        col1, col2 = st.columns([2, 1])
+            # Charts Row 2
+            col1, col2 = st.columns(2)
 
-        with col1:
-            st.plotly_chart(create_equity_chart(trades_df), use_container_width=True)
+            with col1:
+                st.plotly_chart(create_setup_comparison(trades_df), use_container_width=True)
 
-        with col2:
-            st.plotly_chart(create_pnl_distribution(trades_df), use_container_width=True)
+            with col2:
+                st.plotly_chart(create_context_heatmap(trades_df), use_container_width=True)
 
-        # Charts Row 2
-        col1, col2 = st.columns(2)
+            # Golden Setups
+            st.markdown("### 🏆 Golden Setups")
+            st.markdown("*Best performing condition combinations*")
 
-        with col1:
-            st.plotly_chart(create_setup_comparison(trades_df), use_container_width=True)
+            try:
+                analyzer = TradeAnalyzer(trades_df)
+                golden = analyzer.find_golden_setups(min_trades=3)
 
-        with col2:
-            st.plotly_chart(create_context_heatmap(trades_df), use_container_width=True)
+                if golden:
+                    for i, gs in enumerate(golden[:5], 1):
+                        conditions = ', '.join([f"**{k}**={v}" for k, v in gs['conditions'].items()])
+                        col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+                        with col1:
+                            st.markdown(f"{i}. {conditions}")
+                        with col2:
+                            st.write(f"Trades: {gs['trades']}")
+                        with col3:
+                            st.write(f"WR: {gs['win_rate']:.0%}")
+                        with col4:
+                            st.write(f"PF: {gs['profit_factor']:.2f}")
+                else:
+                    st.info("Not enough data to identify golden setups")
+            except Exception as e:
+                st.warning(f"Could not analyze golden setups: {e}")
 
-        # Golden Setups
-        st.markdown("### 🏆 Golden Setups")
-        st.markdown("*Best performing condition combinations*")
+            # Trade Log
+            st.markdown("---")
+            st.markdown("### 📋 Trade Log")
 
-        try:
-            analyzer = TradeAnalyzer(trades_df)
-            golden = analyzer.find_golden_setups(min_trades=3)
+            display_cols = ['ticker', 'setup_type', 'entry_time', 'entry_price',
+                            'exit_price', 'pnl', 'pnl_pct', 'r_multiple', 'exit_reason']
+            display_cols = [c for c in display_cols if c in trades_df.columns]
 
-            if golden:
-                for i, gs in enumerate(golden[:5], 1):
-                    conditions = ', '.join([f"**{k}**={v}" for k, v in gs['conditions'].items()])
-                    col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
-                    with col1:
-                        st.markdown(f"{i}. {conditions}")
-                    with col2:
-                        st.write(f"Trades: {gs['trades']}")
-                    with col3:
-                        st.write(f"WR: {gs['win_rate']:.0%}")
-                    with col4:
-                        st.write(f"PF: {gs['profit_factor']:.2f}")
-            else:
-                st.info("Not enough data to identify golden setups")
-        except Exception as e:
-            st.warning(f"Could not analyze golden setups: {e}")
+            st.dataframe(
+                trades_df[display_cols].style.format({
+                    'entry_price': '${:.2f}',
+                    'exit_price': '${:.2f}',
+                    'pnl': '${:.2f}',
+                    'pnl_pct': '{:.1f}%',
+                    'r_multiple': '{:.2f}R'
+                }).applymap(
+                    lambda x: 'color: #22c55e' if isinstance(x, (int, float)) and x > 0 else 'color: #ef4444' if isinstance(x, (int, float)) and x < 0 else '',
+                    subset=['pnl', 'pnl_pct', 'r_multiple']
+                ),
+                use_container_width=True,
+                height=400
+            )
 
-        # Trade Log
-        st.markdown("---")
-        st.markdown("### 📋 Trade Log")
-
-        display_cols = ['ticker', 'setup_type', 'entry_time', 'entry_price',
-                        'exit_price', 'pnl', 'pnl_pct', 'r_multiple', 'exit_reason']
-        display_cols = [c for c in display_cols if c in trades_df.columns]
-
-        st.dataframe(
-            trades_df[display_cols].style.format({
-                'entry_price': '${:.2f}',
-                'exit_price': '${:.2f}',
-                'pnl': '${:.2f}',
-                'pnl_pct': '{:.1f}%',
-                'r_multiple': '{:.2f}R'
-            }).applymap(
-                lambda x: 'color: #22c55e' if isinstance(x, (int, float)) and x > 0 else 'color: #ef4444' if isinstance(x, (int, float)) and x < 0 else '',
-                subset=['pnl', 'pnl_pct', 'r_multiple']
-            ),
-            use_container_width=True,
-            height=400
-        )
-
-        # Download Button
-        csv = trades_df.to_csv(index=False)
-        st.download_button(
-            label="📥 Download Trade Log (CSV)",
-            data=csv,
-            file_name=f"backtest_trades_{datetime.now().strftime('%Y%m%d')}.csv",
-            mime="text/csv"
-        )
+            # Download Button
+            csv = trades_df.to_csv(index=False)
+            st.download_button(
+                label="📥 Download Trade Log (CSV)",
+                data=csv,
+                file_name=f"backtest_trades_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv"
+            )
 
     else:
         # Welcome screen
